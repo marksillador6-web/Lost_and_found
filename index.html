@@ -45,8 +45,7 @@
       <div class="card-form">
         <label for="type">Report Type</label>
         <select id="type"><option value="lost">🔴 LOST ITEM</option><option value="found">🟢 FOUND ITEM</option></select>
-        <label for="name">Item Name</label>
-        <input type="text" id="name" placeholder="e.g., Black wallet" autocomplete="off">
+        <input type="hidden" id="name">
         <label for="location">Location</label>
         <input type="text" id="location" placeholder="e.g., Library 2nd Floor">
         <label for="phone">Phone Number (optional)</label>
@@ -56,8 +55,12 @@
           <div><label for="time">Time</label><input type="time" id="time"></div>
         </div>
         <label>Item Photo</label>
-        <p class="small-note">Take a picture. The AI will suggest an item name and description. Review them before posting.</p>
-        <button type="button" class="cam-control-btn" onclick="startCamera()">📷 Open Live Camera</button>
+        <p class="small-note">Take a picture. AI will automatically suggest the item name and a short description in the Description box. Review them before posting.</p>
+        <div class="form-row">
+          <button type="button" class="cam-control-btn" onclick="startCamera()">📷 Take a Photo</button>
+          <button type="button" class="cam-control-btn" onclick="byId('photo-upload').click()">🖼️ Upload a Photo</button>
+        </div>
+        <input type="file" id="photo-upload" accept="image/*" hidden onchange="handlePhotoUpload(event)">
         <div id="camera-container"></div>
         <button type="button" id="capture-btn" class="cam-control-btn" style="display:none;background:var(--lost)" onclick="captureSnapshot()">📸 Take Photo Snapshot</button>
         <div id="snapshot-preview" style="margin-top:10px;text-align:center"></div>
@@ -126,60 +129,187 @@
       }
       byId('camera-container').style.display='none';byId('capture-btn').style.display='none';
     }
+    function showPhotoPreview(dataUrl, altText='Selected item photo'){
+      byId('capturedImageData').value=dataUrl;
+      byId('snapshot-preview').replaceChildren();
+      const img=document.createElement('img');img.src=dataUrl;img.alt=altText;img.className='item-photo';img.style.maxHeight='180px';byId('snapshot-preview').appendChild(img);
+    }
+
     async function captureSnapshot(){
       const video=document.querySelector('#camera-container video');
       if(!video||!video.videoWidth){alert('Camera feed is not active yet. Please wait and try again.');return;}
       const canvas=document.createElement('canvas');canvas.width=video.videoWidth;canvas.height=video.videoHeight;
       canvas.getContext('2d').drawImage(video,0,0,canvas.width,canvas.height);
       const dataUrl=canvas.toDataURL('image/jpeg',0.8);
-      byId('capturedImageData').value=dataUrl;
-      byId('snapshot-preview').replaceChildren();
-      const img=document.createElement('img');img.src=dataUrl;img.alt='Captured item photo';img.className='item-photo';img.style.maxHeight='180px';byId('snapshot-preview').appendChild(img);
+      showPhotoPreview(dataUrl, 'Captured item photo');
       await stopCamera();
       await analyzeCapturedImage(dataUrl);
     }
 
-    // Browser-based image captioning. Model files are downloaded on first use.
-    let imageCaptioner=null, isAnalyzing=false;
-    async function analyzeCapturedImage(imageData){
-      const status=byId('ai-status'),nameInput=byId('name'),descInput=byId('desc');
-      if(isAnalyzing)return;
-      isAnalyzing=true;status.textContent='⏳ Loading AI model and analyzing your photo. First use may take a few minutes...';
-      try{
-        if(!imageCaptioner){
-          const {pipeline,env}=await import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.2');
-          env.allowLocalModels=false;
-          imageCaptioner=await pipeline('image-to-text','Xenova/vit-gpt2-image-captioning');
+    async function handlePhotoUpload(event){
+      const file=event.target.files && event.target.files[0];
+      if(!file)return;
+      if(!file.type.startsWith('image/')){
+        alert('Please select an image file such as JPG, PNG, or WEBP.');
+        event.target.value='';
+        return;
+      }
+      if(file.size>12*1024*1024){
+        alert('Please choose a photo smaller than 12 MB.');
+        event.target.value='';
+        return;
+      }
+      await stopCamera();
+      const reader=new FileReader();
+      reader.onload=async()=>{
+        const dataUrl=String(reader.result||'');
+        if(!dataUrl){alert('Could not read this photo. Please choose another image.');return;}
+        showPhotoPreview(dataUrl, 'Uploaded item photo');
+        await analyzeCapturedImage(dataUrl);
+        event.target.value='';
+      };
+      reader.onerror=()=>{
+        alert('Could not open this photo. Please try another image.');
+        event.target.value='';
+      };
+      reader.readAsDataURL(file);
+    }
+
+    // Fast object detection first; use captioning only when no clear object is detected.
+    let objectDetector = null;
+    let imageCaptioner = null;
+    let isAnalyzing = false;
+
+    function prettyItemName(label) {
+      return String(label || '')
+        .replace(/\bcell phone\b/i, 'Mobile Phone')
+        .replace(/\bhandbag\b/i, 'Handbag')
+        .replace(/\bbackpack\b/i, 'Backpack')
+        .replace(/\blaptop\b/i, 'Laptop')
+        .replace(/\bbook\b/i, 'Book')
+        .replace(/\bbottle\b/i, 'Bottle')
+        .replace(/\bumbrella\b/i, 'Umbrella')
+        .replace(/\bremote\b/i, 'Remote Control')
+        .replace(/\bkeys\b/i, 'Keys')
+        .replace(/\bwallet\b/i, 'Wallet')
+        .replace(/\bmouse\b/i, 'Computer Mouse')
+        .replace(/\bkeyboard\b/i, 'Keyboard')
+        .replace(/\b\w/g, c => c.toUpperCase());
+    }
+
+    async function loadTransformers() {
+      const { pipeline, env } = await import(
+        'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.2'
+      );
+      env.allowLocalModels = false;
+      env.useBrowserCache = true;
+      return pipeline;
+    }
+
+    async function analyzeCapturedImage(imageData) {
+      const status = byId('ai-status');
+      const nameInput = byId('name');
+      const descInput = byId('desc');
+      if (isAnalyzing) return;
+
+      isAnalyzing = true;
+      const postBtn = byId('postBtn');
+      postBtn.disabled = true;
+      status.textContent = '⏳ Loading the lightweight AI model and checking your photo...';
+
+      try {
+        const pipeline = await loadTransformers();
+
+        // YOLOS-Tiny is much smaller than the previous image-captioning model.
+        if (!objectDetector) {
+          objectDetector = await pipeline(
+            'object-detection',
+            'Xenova/yolos-tiny'
+          );
         }
-        const result=await imageCaptioner(imageData);
-        const caption=String(result?.[0]?.generated_text||'').trim();
-        if(!caption)throw new Error('No caption was generated.');
-        let itemName=caption.replace(/^(a|an|the)\s+/i,'').replace(/[.!?]+$/,'').trim();
-        itemName=itemName.charAt(0).toUpperCase()+itemName.slice(1);
-        // Preserve user-entered values; fill only empty fields.
-        if(!nameInput.value.trim())nameInput.value=itemName;
-        else nameInput.value=itemName;
-        if(!descInput.value.trim())descInput.value='AI suggestion: '+caption;
-        else descInput.value=descInput.value+'\nAI suggestion: '+caption;
-        status.textContent='✅ AI suggestion ready. Please check the name and description for accuracy.';
-      }catch(err){
-        console.error('AI image analysis failed:',err);
-        status.textContent='⚠️ AI analysis failed. Check your internet connection, then take another photo. You can still enter the details manually.';
-      }finally{isAnalyzing=false;}
+
+        // Downscale the photo to reduce inference time on mobile phones.
+        const source = new Image();
+        source.src = imageData;
+        await new Promise((resolve, reject) => {
+          source.onload = resolve;
+          source.onerror = () => reject(new Error('Could not read the captured photo.'));
+        });
+
+        const canvas = document.createElement('canvas');
+        const maxSide = 640;
+        const scale = Math.min(1, maxSide / Math.max(source.naturalWidth, source.naturalHeight));
+        canvas.width = Math.max(1, Math.round(source.naturalWidth * scale));
+        canvas.height = Math.max(1, Math.round(source.naturalHeight * scale));
+        canvas.getContext('2d', { alpha: false }).drawImage(source, 0, 0, canvas.width, canvas.height);
+
+        status.textContent = '🔎 Identifying objects in your photo...';
+        const detections = await objectDetector(canvas.toDataURL('image/jpeg', 0.78));
+        const best = (Array.isArray(detections) ? detections : [])
+          .filter(d => d && d.label && Number(d.score) >= 0.35)
+          .sort((a, b) => Number(b.score) - Number(a.score))[0];
+
+        let itemName = '';
+        let shortDescription = '';
+
+        if (best) {
+          itemName = prettyItemName(best.label);
+          const confidence = Math.round(Number(best.score) * 100);
+          shortDescription = `A ${String(best.label).toLowerCase()} detected in the photo. AI confidence: ${confidence}%. Check the photo to confirm the item's identity.`;
+        } else {
+          // Slower fallback captioner is loaded only if object detection finds no clear object.
+          status.textContent = '🔎 No clear object detected. Trying detailed image captioning...';
+          if (!imageCaptioner) {
+            imageCaptioner = await pipeline(
+              'image-to-text',
+              'Xenova/vit-gpt2-image-captioning'
+            );
+          }
+          const captions = await imageCaptioner(canvas.toDataURL('image/jpeg', 0.78));
+          const caption = String(captions?.[0]?.generated_text || '').trim().replace(/\s+/g, ' ');
+          if (!caption) throw new Error('The AI could not identify a clear object.');
+          shortDescription = caption.charAt(0).toUpperCase() + caption.slice(1).replace(/[.!?]+$/, '') + '.';
+          itemName = caption.replace(/^(a|an|the)\s+/i, '').replace(/[.!?]+$/, '').trim().split(/\s+/).slice(0, 4).join(' ');
+          itemName = itemName.charAt(0).toUpperCase() + itemName.slice(1);
+        }
+
+        nameInput.value = itemName;
+        descInput.value = `Item Name: ${itemName}\nShort Description: ${shortDescription}`;
+        status.textContent = '✅ AI suggestion ready. Please verify the item name and description before posting.';
+      } catch (err) {
+        console.error('AI image analysis failed:', err);
+        status.textContent = '⚠️ AI could not identify this photo. Check your internet connection or enter the item details manually.';
+      } finally {
+        isAnalyzing = false;
+        postBtn.disabled = false;
+      }
     }
 
     async function addItem(){
-      const name=byId('name').value.trim(),location=byId('location').value.trim();
-      if(!name||!location){alert('Please fill in the Item Name and Location.');return;}
-      const item={type:byId('type').value,name,location,phone:byId('phone').value.trim(),date:byId('date').value,time:byId('time').value,desc:byId('desc').value.trim(),image:byId('capturedImageData').value||null,status:'unclaimed'};
+      const description=byId('desc').value.trim();
+      const location=byId('location').value.trim();
+      const nameMatch=description.match(/^Item Name:\s*(.+)$/im);
+      const name=(byId('name').value.trim()||(nameMatch?nameMatch[1].trim():''));
+      if(!name||!description){alert('Please take a photo for AI-generated details, or enter both Item Name: and Short Description: in the Description box.');return;}
+      if(!location){alert('Please fill in the Location.');return;}
+      const item={type:byId('type').value,name,location,phone:byId('phone').value.trim(),date:byId('date').value,time:byId('time').value,desc:description,image:byId('capturedImageData').value||null,status:'unclaimed'};
       try{
-        await db.items.add(item);alert('Posted successfully!');
+        await db.items.add(item);
+        alert('Posted successfully!');
         ['name','location','phone','date','time','desc'].forEach(id=>byId(id).value='');
-        byId('snapshot-preview').replaceChildren();byId('capturedImageData').value='';byId('ai-status').textContent='';
-        currentFilter='all';document.querySelectorAll('.filter-btn').forEach(b=>b.classList.toggle('active',b.textContent.trim()==='All Items'));
-        await refreshFeed();showPage('feedPage',document.querySelectorAll('.tab-btn')[1]);
-      }catch(error){console.error('Error saving item:',error);alert('Could not save item. Your browser storage may be full; try a smaller photo.');}
+        byId('snapshot-preview').replaceChildren();
+        byId('capturedImageData').value='';
+        byId('ai-status').textContent='';
+        currentFilter='all';
+        document.querySelectorAll('.filter-btn').forEach(b=>b.classList.toggle('active',b.textContent.trim()==='All Items'));
+        await refreshFeed();
+        showPage('feedPage',document.querySelectorAll('.tab-btn')[1]);
+      }catch(error){
+        console.error('Error saving item:',error);
+        alert('Could not save item. Your browser storage may be full; try a smaller photo.');
+      }
     }
+
     function updateFilter(type,btn){currentFilter=type;document.querySelectorAll('.filter-btn').forEach(b=>b.classList.remove('active'));btn.classList.add('active');refreshFeed();}
     async function toggleStatus(id){
       const item=await db.items.get(id);if(!item)return;
