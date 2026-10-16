@@ -101,7 +101,7 @@
     let cameraStarting = false;
 
     const byId = id => document.getElementById(id);
-    function openApp(){byId('landingPage').style.display='none';byId('mainApp').style.display='block';refreshFeed();prepareAI();}
+    function openApp(){byId('landingPage').style.display='none';byId('mainApp').style.display='block';refreshFeed();byId('ai-status').textContent='AI starts when you select a photo. First analysis may take longer while the model downloads.';}
     function showPage(pageId,btn){
       document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
       document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
@@ -129,157 +129,109 @@
       }
       byId('camera-container').style.display='none';byId('capture-btn').style.display='none';
     }
+    // Resize and compress photos before preview, AI, or local storage.
+    // This reduces memory use and makes uploads smoother on phones.
+    function compressPhoto(fileOrDataUrl, maxSide=1000, quality=0.72){
+      return new Promise((resolve,reject)=>{
+        const img=new Image();
+        img.onload=()=>{
+          try{
+            const scale=Math.min(1,maxSide/Math.max(img.naturalWidth,img.naturalHeight));
+            const canvas=document.createElement('canvas');
+            canvas.width=Math.max(1,Math.round(img.naturalWidth*scale));
+            canvas.height=Math.max(1,Math.round(img.naturalHeight*scale));
+            const ctx=canvas.getContext('2d',{alpha:false});
+            ctx.drawImage(img,0,0,canvas.width,canvas.height);
+            resolve(canvas.toDataURL('image/jpeg',quality));
+          }catch(e){reject(e);}
+        };
+        img.onerror=()=>reject(new Error('Could not open this photo.'));
+        if(typeof fileOrDataUrl==='string') img.src=fileOrDataUrl;
+        else img.src=URL.createObjectURL(fileOrDataUrl);
+      });
+    }
     function showPhotoPreview(dataUrl, altText='Selected item photo'){
       byId('capturedImageData').value=dataUrl;
       byId('snapshot-preview').replaceChildren();
       const img=document.createElement('img');img.src=dataUrl;img.alt=altText;img.className='item-photo';img.style.maxHeight='180px';byId('snapshot-preview').appendChild(img);
     }
-
     async function captureSnapshot(){
       const video=document.querySelector('#camera-container video');
       if(!video||!video.videoWidth){alert('Camera feed is not active yet. Please wait and try again.');return;}
-      const canvas=document.createElement('canvas');canvas.width=video.videoWidth;canvas.height=video.videoHeight;
-      canvas.getContext('2d').drawImage(video,0,0,canvas.width,canvas.height);
-      const dataUrl=canvas.toDataURL('image/jpeg',0.8);
-      showPhotoPreview(dataUrl, 'Captured item photo');
+      const canvas=document.createElement('canvas');
+      const scale=Math.min(1,1000/Math.max(video.videoWidth,video.videoHeight));
+      canvas.width=Math.max(1,Math.round(video.videoWidth*scale));canvas.height=Math.max(1,Math.round(video.videoHeight*scale));
+      canvas.getContext('2d',{alpha:false}).drawImage(video,0,0,canvas.width,canvas.height);
+      const dataUrl=canvas.toDataURL('image/jpeg',0.72);
+      showPhotoPreview(dataUrl,'Captured item photo');
       await stopCamera();
-      await analyzeCapturedImage(dataUrl);
+      // Let the preview appear before starting the heavier AI work.
+      setTimeout(()=>analyzeCapturedImage(dataUrl),80);
     }
-
     async function handlePhotoUpload(event){
-      const file=event.target.files && event.target.files[0];
+      const file=event.target.files&&event.target.files[0];
       if(!file)return;
-      if(!file.type.startsWith('image/')){
-        alert('Please select an image file such as JPG, PNG, or WEBP.');
-        event.target.value='';
-        return;
-      }
-      if(file.size>12*1024*1024){
-        alert('Please choose a photo smaller than 12 MB.');
-        event.target.value='';
-        return;
-      }
+      if(!file.type.startsWith('image/')){alert('Please select an image file such as JPG, PNG, or WEBP.');event.target.value='';return;}
+      if(file.size>20*1024*1024){alert('Please choose a photo smaller than 20 MB.');event.target.value='';return;}
       await stopCamera();
-      const reader=new FileReader();
-      reader.onload=async()=>{
-        const dataUrl=String(reader.result||'');
-        if(!dataUrl){alert('Could not read this photo. Please choose another image.');return;}
-        showPhotoPreview(dataUrl, 'Uploaded item photo');
-        await analyzeCapturedImage(dataUrl);
-        event.target.value='';
-      };
-      reader.onerror=()=>{
-        alert('Could not open this photo. Please try another image.');
-        event.target.value='';
-      };
-      reader.readAsDataURL(file);
+      const status=byId('ai-status');status.textContent='⚡ Optimizing photo for your phone...';
+      try{
+        const dataUrl=await compressPhoto(file,1000,0.72);
+        showPhotoPreview(dataUrl,'Uploaded item photo');
+        status.textContent='✅ Photo ready. AI is checking the item; you can continue filling the form.';
+        // Do not keep the upload handler blocked while AI downloads/runs.
+        setTimeout(()=>analyzeCapturedImage(dataUrl),80);
+      }catch(err){console.error(err);alert('Could not open this photo. Please try another image.');status.textContent='Please choose another photo.';}
+      finally{event.target.value='';}
     }
 
-    // Load one lightweight model in the background. Reuse it for every photo.
-    let objectDetector = null;
-    let detectorPromise = null;
-    let isAnalyzing = false;
-
-    function prettyItemName(label) {
-      const clean = String(label || 'Unidentified Item').toLowerCase();
-      const aliases = {
-        'cell phone': 'Mobile Phone', 'handbag': 'Handbag', 'backpack': 'Backpack',
-        'laptop': 'Laptop', 'book': 'Book', 'bottle': 'Bottle', 'umbrella': 'Umbrella',
-        'remote': 'Remote Control', 'mouse': 'Computer Mouse', 'keyboard': 'Keyboard',
-        'suitcase': 'Suitcase', 'tie': 'Tie', 'clock': 'Clock', 'scissors': 'Scissors'
+    // Lightweight image classification. Model loads only when a photo is selected.
+    let imageClassifier=null;
+    let classifierPromise=null;
+    let isAnalyzing=false;
+    function prettyItemName(label){
+      const clean=String(label||'Unidentified Item').toLowerCase().split(',')[0].trim();
+      const aliases={
+        'cellular telephone':'Mobile Phone','cell phone':'Mobile Phone','handbag':'Handbag','purse':'Handbag',
+        'backpack':'Backpack','laptop':'Laptop','notebook':'Notebook','book':'Book','water bottle':'Bottle',
+        'bottle':'Bottle','umbrella':'Umbrella','remote control':'Remote Control','computer mouse':'Computer Mouse',
+        'keyboard':'Keyboard','suitcase':'Suitcase','wallet':'Wallet','watch':'Watch','analog clock':'Clock',
+        'digital clock':'Clock','sunglasses':'Sunglasses','glasses':'Glasses','key':'Keys','shoe':'Shoe','running shoe':'Shoe'
       };
-      return aliases[clean] || clean.replace(/\b\w/g, c => c.toUpperCase());
+      return aliases[clean]||clean.replace(/\b\w/g,c=>c.toUpperCase())||'Unidentified Item';
     }
-
-    async function getObjectDetector() {
-      if (objectDetector) return objectDetector;
-      if (!detectorPromise) {
-        detectorPromise = (async () => {
-          const { pipeline, env } = await import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.2');
-          env.allowLocalModels = false;
-          env.useBrowserCache = true;
-          return await pipeline('object-detection', 'Xenova/yolos-tiny');
-        })().then(model => {
-          objectDetector = model;
-          return model;
-        }).catch(error => {
-          detectorPromise = null; // allow retry if the network fails
-          throw error;
-        });
+    async function getImageClassifier(){
+      if(imageClassifier)return imageClassifier;
+      if(!classifierPromise){
+        classifierPromise=(async()=>{
+          const {pipeline,env}=await import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.2');
+          env.allowLocalModels=false;env.useBrowserCache=true;
+          return pipeline('image-classification','onnx-community/mobilenetv4_conv_small.e2400_r224_in1k',{dtype:'q8'});
+        })().then(model=>(imageClassifier=model)).catch(err=>{classifierPromise=null;throw err;});
       }
-      return detectorPromise;
+      return classifierPromise;
     }
-
-    function prepareAI() {
-      const status = byId('ai-status');
-      if (!objectDetector && !detectorPromise) {
-        status.textContent = '⚡ Preparing AI in the background. First-time setup may take a little while.';
-        getObjectDetector().then(() => {
-          if (!isAnalyzing) status.textContent = '✅ AI is ready. Take or upload a photo.';
-        }).catch(error => {
-          console.warn('AI preload failed:', error);
-          if (!isAnalyzing) status.textContent = 'AI will try to load when you choose a photo. Keep your internet connected.';
-        });
-      }
-    }
-
-    async function analyzeCapturedImage(imageData) {
-      const status = byId('ai-status');
-      const nameInput = byId('name');
-      const descInput = byId('desc');
-      if (isAnalyzing) return;
-
-      isAnalyzing = true;
-      const postBtn = byId('postBtn');
-      postBtn.disabled = true;
-      status.textContent = '⚡ Checking photo...';
-
-      try {
-        // Resize before inference to reduce processing time on phones.
-        const source = new Image();
-        source.src = imageData;
-        await new Promise((resolve, reject) => {
-          source.onload = resolve;
-          source.onerror = () => reject(new Error('Could not read the photo.'));
-        });
-        const canvas = document.createElement('canvas');
-        const maxSide = 480;
-        const scale = Math.min(1, maxSide / Math.max(source.naturalWidth, source.naturalHeight));
-        canvas.width = Math.max(1, Math.round(source.naturalWidth * scale));
-        canvas.height = Math.max(1, Math.round(source.naturalHeight * scale));
-        canvas.getContext('2d', { alpha: false }).drawImage(source, 0, 0, canvas.width, canvas.height);
-
-        status.textContent = objectDetector ? '🔎 Identifying the main object...' : '⏳ First AI load can take a while; keep this page open...';
-        const detector = await getObjectDetector();
-        status.textContent = '🔎 Identifying the main object...';
-        const detections = await detector(canvas.toDataURL('image/jpeg', 0.65));
-        const best = (Array.isArray(detections) ? detections : [])
-          .filter(d => d && d.label && Number(d.score) >= 0.30)
-          .sort((a, b) => Number(b.score) - Number(a.score))[0];
-
-        let itemName;
-        let shortDescription;
-        if (best) {
-          itemName = prettyItemName(best.label);
-          shortDescription = `A ${String(best.label).toLowerCase()} appears in the photo. Please check its color, brand, and identifying marks before posting.`;
-        } else {
-          // Avoid loading a second large model; that was causing very long waits.
-          itemName = 'Unidentified Item';
-          shortDescription = 'An item is shown in the photo, but the AI could not confidently identify it. Please add its color, brand, shape, or other identifying details.';
+    async function analyzeCapturedImage(imageData){
+      const status=byId('ai-status'),nameInput=byId('name'),descInput=byId('desc');
+      if(isAnalyzing)return;
+      isAnalyzing=true;
+      try{
+        status.textContent='⏳ AI is loading or analyzing the photo. You can still fill in the other fields.';
+        const classifier=await getImageClassifier();
+        const predictions=await classifier(imageData,{top_k:1});
+        const best=Array.isArray(predictions)&&predictions.length?predictions[0]:null;
+        if(best&&best.label){
+          const itemName=prettyItemName(best.label);
+          nameInput.value=itemName;
+          descInput.value=`Item Name: ${itemName}\nShort Description: The photo may show ${String(best.label).toLowerCase()}. Please verify the item and add its color, brand, model, and identifying marks.`;
+          status.textContent='✅ AI suggestion ready. Please verify the name and description.';
+        }else{
+          status.textContent='⚠️ AI could not identify the item. Please enter its name and details manually.';
         }
-
-        nameInput.value = itemName;
-        descInput.value = `Item Name: ${itemName}\nShort Description: ${shortDescription}`;
-        status.textContent = best
-          ? '✅ Suggestion ready. Please check it before posting.'
-          : '⚠️ The AI could not identify this item. Add the correct name and details before posting.';
-      } catch (err) {
-        console.error('AI image analysis failed:', err);
-        status.textContent = '⚠️ AI could not load or analyze the photo. Check your internet, then try again or enter the details manually.';
-      } finally {
-        isAnalyzing = false;
-        postBtn.disabled = false;
-      }
+      }catch(err){
+        console.warn('AI image analysis failed:',err);
+        status.textContent='⚠️ AI could not load. Your photo is ready; enter the item name and description manually or try again with internet.';
+      }finally{isAnalyzing=false;}
     }
 
     async function addItem(){
