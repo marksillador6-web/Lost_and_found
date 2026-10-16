@@ -1,433 +1,229 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Lost & Found Portal</title>
-    
-    <!-- Google Fonts -->
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
-    <!-- Dexie.js for IndexedDB storage -->
-    <script src="https://unpkg.com/dexie/dist/dexie.js"></script>
-    <!-- HTML5 QR Code Scanner -->
-    <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
-
-    <!-- ======================================================================= -->
-    <!-- CSS SECTION START -->
-    <!-- ======================================================================= -->
-    <style>
-        :root { 
-            --primary: #6366f1; 
-            --primary-hover: #4f46e5;
-            --bg: #f8fafc; 
-            --card-bg: #ffffff;
-            --text: #0f172a; 
-            --text-muted: #64748b;
-            --lost: #e11d48; 
-            --lost-bg: #fff1f2;
-            --found: #16a34a; 
-            --found-bg: #f0fdf4;
-            --border: #e2e8f0;
-            --radius-lg: 24px;
-            --radius-md: 16px;
-            --radius-sm: 12px;
-            --shadow: 0 10px 30px -5px rgba(0, 0, 0, 0.05), 0 0 1px 1px rgba(0, 0, 0, 0.05);
-        }
-        
-        /* ANIMATION KEYFRAMES */
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
-        @keyframes gradientBG { 0% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } 100% { background-position: 0% 50%; } }
-        
-        * { box-sizing: border-box; }
-        body { font-family: 'Inter', system-ui, sans-serif; background: var(--bg); margin: 0; color: var(--text); padding-bottom: 100px; -webkit-font-smoothing: antialiased; }
-        
-        /* LANDING PAGE */
-        #landingPage { 
-            display: flex; 
-            flex-direction: column; 
-            justify-content: center; 
-            align-items: center; 
-            height: 100vh; 
-            text-align: center; 
-            padding: 24px; 
-            background: linear-gradient(-45deg, #6366f1, #8b5cf6, #3b82f6, #6366f1);
-            background-size: 400% 400%;
-            animation: gradientBG 12s ease infinite;
-            color: white;
-        }
-        .hero-badge { background: rgba(255, 255, 255, 0.15); backdrop-filter: blur(10px); padding: 8px 16px; border-radius: 50px; font-size: 0.85rem; font-weight: 700; letter-spacing: 1px; margin-bottom: 20px; text-transform: uppercase; border: 1px solid rgba(255,255,255,0.2); }
-        .hero-title { font-size: 3.5rem; font-weight: 900; margin: 0 0 12px 0; letter-spacing: -1px; text-shadow: 0 4px 20px rgba(0,0,0,0.15); }
-        .hero-subtitle { font-size: 1.15rem; opacity: 0.9; margin-bottom: 40px; max-width: 450px; line-height: 1.5; }
-        .open-btn { 
-            background: white; color: var(--primary); border: none; padding: 18px 48px; 
-            border-radius: 50px; font-size: 1.1rem; font-weight: 800; cursor: pointer; 
-            transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1); box-shadow: 0 10px 30px rgba(0,0,0,0.2);
-        }
-        .open-btn:hover { transform: translateY(-4px) scale(1.03); box-shadow: 0 20px 40px rgba(0,0,0,0.3); }
-        
-        #mainApp { display: none; max-width: 540px; margin: 0 auto; }
-        
-        /* HEADER & NAV */
-        header { 
-            background: linear-gradient(135deg, var(--primary), #4f46e5); 
-            padding: 35px 20px 65px 20px; 
-            text-align: center; 
-            color: white; 
-            font-size: 1.6rem; 
-            font-weight: 900; 
-            letter-spacing: -0.5px;
-            border-radius: 0 0 var(--radius-lg) var(--radius-lg); 
-            box-shadow: 0 10px 25px rgba(99, 102, 241, 0.25); 
-        }
-        .nav-tabs { 
-            display: flex; 
-            gap: 8px; 
-            padding: 6px; 
-            max-width: 380px; 
-            margin: -35px auto 25px auto; 
-            background: rgba(255, 255, 255, 0.9); 
-            backdrop-filter: blur(12px);
-            border-radius: var(--radius-md); 
-            box-shadow: 0 8px 25px rgba(0,0,0,0.06); 
-            border: 1px solid rgba(255,255,255,0.8);
-        }
-        .tab-btn { flex: 1; padding: 12px; cursor: pointer; border: none; border-radius: 10px; background: transparent; font-weight: 700; color: var(--text-muted); font-size: 0.9rem; transition: all 0.25s ease; }
-        .tab-btn.active { background: var(--primary); color: white; box-shadow: 0 4px 12px rgba(99,102,241,0.3); }
-        
-        .page { display: none; padding: 0 16px; animation: fadeIn 0.35s cubic-bezier(0.16, 1, 0.3, 1); }
-        .page.active { display: block; }
-
-        /* FORMS & INPUTS */
-        .card-form { background: var(--card-bg); padding: 28px; border-radius: var(--radius-lg); border: 1px solid var(--border); box-shadow: var(--shadow); }
-        .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-        input, textarea, select { width: 100%; padding: 14px 16px; margin: 6px 0 14px 0; border: 1.5px solid var(--border); border-radius: var(--radius-sm); background: #f8fafc; font-size: 0.95rem; font-family: inherit; color: var(--text); box-sizing: border-box; transition: all 0.2s ease; }
-        input:focus, textarea:focus, select:focus { border-color: var(--primary); background: #fff; outline: none; box-shadow: 0 0 0 4px rgba(99,102,241,0.1); }
-        label { font-size: 0.85rem; font-weight: 700; color: var(--text-muted); display: block; margin-top: 4px; text-transform: uppercase; letter-spacing: 0.5px; }
-        
-        .submit-btn { background: var(--primary); color: white; border: none; padding: 16px; cursor: pointer; width: 100%; border-radius: var(--radius-sm); font-weight: 800; font-size: 1rem; margin-top: 10px; transition: all 0.2s; box-shadow: 0 4px 12px rgba(99,102,241,0.25); }
-        .submit-btn:hover { background: var(--primary-hover); transform: translateY(-1px); }
-        
-        /* FEED CARDS */
-        .card { background: var(--card-bg); padding: 22px; margin-bottom: 20px; border-radius: var(--radius-md); border: 1px solid var(--border); position: relative; box-shadow: var(--shadow); transition: transform 0.2s; animation: fadeIn 0.4s ease-out; }
-        .card:hover { transform: translateY(-2px); }
-        .card.lost { border-left: 6px solid var(--lost); }
-        .card.found { border-left: 6px solid var(--found); }
-        
-        .type-badge { display: inline-flex; align-items: center; padding: 4px 12px; border-radius: 20px; font-size: 0.7rem; font-weight: 800; color: white; margin-bottom: 10px; text-transform: uppercase; letter-spacing: 0.5px; }
-        .card.lost .type-badge { background: var(--lost); }
-        .card.found .type-badge { background: var(--found); }
-        
-        .item-name { font-size: 1.25rem; font-weight: 800; display: block; margin-bottom: 8px; color: var(--text); }
-        .item-phone { display: inline-flex; align-items: center; gap: 6px; background: #e0e7ff; color: var(--primary); padding: 6px 14px; border-radius: 20px; font-weight: 700; text-decoration: none; margin-top: 12px; font-size: 0.85rem; transition: 0.2s; }
-        .item-phone:hover { background: #c7d2fe; }
-        
-        .delete-btn { position: absolute; top: 20px; right: 20px; background: #fee2e2; color: #ef4444; border: none; border-radius: 8px; padding: 6px 10px; cursor: pointer; font-size: 0.75rem; font-weight: 700; transition: 0.2s; }
-        .delete-btn:hover { background: #fecaca; }
-        
-        .claim-btn { margin-top: 12px; margin-left: 8px; padding: 8px 14px; border-radius: 10px; border: none; cursor: pointer; font-size: 0.8rem; font-weight: 700; transition: 0.2s; }
-        
-        .filters { display: flex; gap: 8px; margin-bottom: 20px; }
-        .filter-btn { padding: 8px 18px; border-radius: 30px; border: 1.5px solid var(--border); background: white; cursor: pointer; font-size: 0.8rem; font-weight: 700; color: var(--text-muted); transition: 0.2s; }
-        .filter-btn.active { background: var(--text); color: white; border-color: var(--text); }
-
-        /* Search Bar */
-        .search-box { width: 100%; padding: 14px 18px; margin-bottom: 16px; border-radius: var(--radius-sm); border: 1.5px solid var(--border); box-sizing: border-box; background: white; font-size: 0.95rem; box-shadow: 0 2px 6px rgba(0,0,0,0.02); }
-
-        /* Camera Styles */
-        #camera-container { width: 100%; margin: 10px 0; display: none; border-radius: var(--radius-sm); overflow: hidden; background: #000; border: 2px solid var(--border); }
-        .cam-control-btn { background: #334155; color: white; border: none; padding: 12px; border-radius: var(--radius-sm); font-weight: 700; cursor: pointer; margin-top: 6px; width: 100%; font-size: 0.9rem; transition: 0.2s; }
-        .cam-control-btn:hover { background: #1e293b; }
-
-        /* New Feature: Claim Pass Modal Popup */
-        #modalOverlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); backdrop-filter: blur(5px); display: none; justify-content: center; align-items: center; z-index: 999; padding: 20px; }
-        .modal-card { background: white; padding: 30px; border-radius: var(--radius-lg); max-width: 380px; width: 100%; text-align: center; box-shadow: 0 20px 40px rgba(0,0,0,0.2); animation: fadeIn 0.3s ease; }
-    </style>
-    <!-- ======================================================================= -->
-    <!-- CSS SECTION END -->
-    <!-- ======================================================================= -->
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#6366f1">
+  <title>Lost &amp; Found Portal</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+  <script src="https://unpkg.com/dexie/dist/dexie.js"></script>
+  <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+  <style>
+    :root{--primary:#6366f1;--primary-hover:#4f46e5;--bg:#f8fafc;--card:#fff;--text:#0f172a;--muted:#64748b;--lost:#e11d48;--found:#16a34a;--border:#e2e8f0;--radius-lg:24px;--radius-md:16px;--radius-sm:12px;--shadow:0 10px 30px -5px rgba(0,0,0,.05),0 0 1px 1px rgba(0,0,0,.05)}
+    *{box-sizing:border-box}body{font-family:Inter,system-ui,sans-serif;background:var(--bg);margin:0;color:var(--text);padding-bottom:50px;-webkit-font-smoothing:antialiased}
+    @keyframes fadeIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}@keyframes gradientBG{0%,100%{background-position:0% 50%}50%{background-position:100% 50%}}
+    #landingPage{display:flex;flex-direction:column;justify-content:center;align-items:center;min-height:100vh;text-align:center;padding:24px;background:linear-gradient(-45deg,#6366f1,#8b5cf6,#3b82f6,#6366f1);background-size:400% 400%;animation:gradientBG 12s ease infinite;color:white}
+    .hero-badge{background:#ffffff26;padding:8px 16px;border-radius:50px;font-size:.8rem;font-weight:700;letter-spacing:1px;margin-bottom:20px;text-transform:uppercase;border:1px solid #ffffff40}.hero-title{font-size:clamp(2.5rem,10vw,3.5rem);font-weight:900;margin:0 0 12px;letter-spacing:-1px}.hero-subtitle{font-size:1.05rem;opacity:.92;margin-bottom:32px;max-width:450px;line-height:1.6}
+    button{font-family:inherit}.open-btn{background:white;color:var(--primary);border:0;padding:16px 34px;border-radius:50px;font-size:1.05rem;font-weight:800;cursor:pointer;box-shadow:0 10px 30px #0003}
+    #mainApp{display:none;max-width:620px;margin:0 auto}header{background:linear-gradient(135deg,var(--primary),#4f46e5);padding:32px 18px 60px;text-align:center;color:white;font-size:1.55rem;font-weight:900;border-radius:0 0 var(--radius-lg) var(--radius-lg);box-shadow:0 10px 25px #6366f140}
+    .nav-tabs{display:flex;gap:8px;padding:6px;max-width:400px;margin:-32px auto 24px;background:#fffffff0;border-radius:var(--radius-md);box-shadow:0 8px 25px #0000000f;border:1px solid #ffffffcc}.tab-btn{flex:1;padding:12px 8px;cursor:pointer;border:0;border-radius:10px;background:transparent;font-weight:700;color:var(--muted);font-size:.9rem}.tab-btn.active{background:var(--primary);color:white}
+    .page{display:none;padding:0 14px;animation:fadeIn .3s ease}.page.active{display:block}.card-form{background:var(--card);padding:clamp(18px,5vw,28px);border-radius:var(--radius-lg);border:1px solid var(--border);box-shadow:var(--shadow)}
+    .form-row{display:grid;grid-template-columns:1fr 1fr;gap:12px}input,textarea,select{width:100%;padding:13px 14px;margin:6px 0 14px;border:1.5px solid var(--border);border-radius:var(--radius-sm);background:#f8fafc;font-size:.94rem;font-family:inherit;color:var(--text);transition:border-color .2s}input:focus,textarea:focus,select:focus{border-color:var(--primary);background:white;outline:none;box-shadow:0 0 0 3px #6366f11a}label{font-size:.8rem;font-weight:700;color:var(--muted);display:block;margin-top:4px;text-transform:uppercase;letter-spacing:.4px}
+    .submit-btn{background:var(--primary);color:white;border:0;padding:15px;cursor:pointer;width:100%;border-radius:var(--radius-sm);font-weight:800;font-size:1rem;margin-top:8px;box-shadow:0 4px 12px #6366f140}.submit-btn:disabled{opacity:.6;cursor:wait}.cam-control-btn{background:#334155;color:white;border:0;padding:12px;border-radius:var(--radius-sm);font-weight:700;cursor:pointer;margin-top:6px;width:100%;font-size:.9rem}.small-note{font-size:.82rem;color:var(--muted);line-height:1.5}.ai-status{font-size:.86rem;color:var(--primary);font-weight:600;line-height:1.5;min-height:1.2em}
+    .filters{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap}.filter-btn{padding:8px 15px;border-radius:30px;border:1.5px solid var(--border);background:white;cursor:pointer;font-size:.8rem;font-weight:700;color:var(--muted)}.filter-btn.active{background:var(--text);color:white;border-color:var(--text)}.search-box{width:100%;padding:13px 16px;margin-bottom:14px;border-radius:var(--radius-sm);border:1.5px solid var(--border);background:white;font-size:.94rem}
+    .card{background:var(--card);padding:20px;margin-bottom:16px;border-radius:var(--radius-md);border:1px solid var(--border);position:relative;box-shadow:var(--shadow);animation:fadeIn .3s ease}.card.lost{border-left:6px solid var(--lost)}.card.found{border-left:6px solid var(--found)}.type-badge{display:inline-flex;padding:4px 11px;border-radius:20px;font-size:.7rem;font-weight:800;color:white;margin-bottom:10px;text-transform:uppercase}.card.lost .type-badge{background:var(--lost)}.card.found .type-badge{background:var(--found)}.item-name{font-size:1.15rem;font-weight:800;display:block;margin:0 75px 8px 0;overflow-wrap:anywhere}.delete-btn{position:absolute;top:17px;right:16px;background:#fee2e2;color:#ef4444;border:0;border-radius:8px;padding:7px 10px;cursor:pointer;font-size:.75rem;font-weight:700}.item-phone{display:inline-flex;background:#e0e7ff;color:var(--primary);padding:7px 12px;border-radius:20px;font-weight:700;text-decoration:none;margin-top:10px;font-size:.85rem}.claim-btn{margin-top:12px;padding:9px 13px;border-radius:10px;border:0;cursor:pointer;font-size:.8rem;font-weight:700}.item-photo{width:100%;border-radius:12px;margin-bottom:12px;max-height:240px;object-fit:cover}
+    #camera-container{width:100%;margin:10px 0;display:none;border-radius:var(--radius-sm);overflow:hidden;background:#000;border:2px solid var(--border)}#modalOverlay{position:fixed;inset:0;background:#0009;backdrop-filter:blur(5px);display:none;justify-content:center;align-items:center;z-index:999;padding:20px}.modal-card{background:white;padding:26px;border-radius:var(--radius-lg);max-width:380px;width:100%;text-align:center;box-shadow:0 20px 40px #0003;max-height:90vh;overflow:auto}
+    @media(max-width:420px){.form-row{grid-template-columns:1fr;gap:0}.card-form{padding:18px}.nav-tabs{margin-left:12px;margin-right:12px}}
+  </style>
 </head>
-<body onload="refreshFeed()">
-
-<!-- LANDING PAGE -->
-<div id="landingPage">
-    <div class="hero-badge">Campus & Community</div>
-    <h1 class="hero-title">Lost & Found</h1>
-    <p class="hero-subtitle">The modern way to report, discover, and claim misplaced belongings instantly.</p>
+<body>
+  <div id="landingPage">
+    <div class="hero-badge">Campus &amp; Community</div>
+    <h1 class="hero-title">Lost &amp; Found</h1>
+    <p class="hero-subtitle">Report, discover, and help return misplaced belongings.</p>
     <button class="open-btn" onclick="openApp()">Open Portal ✨</button>
-</div>
+  </div>
 
-<!-- MAIN APP CONTAINER -->
-<div id="mainApp">
-    <header>Lost & Found Portal</header>
-    
+  <div id="mainApp">
+    <header>Lost &amp; Found Portal</header>
     <div class="nav-tabs">
-        <button class="tab-btn active" onclick="showPage('submitPage', this)">➕ Submit Item</button>
-        <button class="tab-btn" onclick="showPage('feedPage', this)">📋 Live Feed</button>
+      <button class="tab-btn active" onclick="showPage('submitPage',this)">➕ Submit Item</button>
+      <button class="tab-btn" onclick="showPage('feedPage',this)">📋 Live Feed</button>
     </div>
 
-    <!-- SUBMIT PAGE -->
-    <div id="submitPage" class="page active">
-        <div class="card-form">
-            <label>Report Type</label>
-            <select id="type">
-                <option value="lost">🔴 LOST ITEM</option>
-                <option value="found">🟢 FOUND ITEM</option>
-            </select>
-            
-            <label>Item Name</label>
-            <input type="text" id="name" placeholder="e.g., MacBook Pro, Blue Hydroflask">
-            
-            <label>Location</label>
-            <input type="text" id="location" placeholder="e.g., Library 2nd Floor">
-            
-            <label>Phone Number</label>
-            <input type="tel" id="phone" placeholder="e.g., +1 (555) 019-2834">
-            
-            <div class="form-row">
-                <div>
-                    <label>Date</label>
-                    <input type="date" id="date">
-                </div>
-                <div>
-                    <label>Time</label>
-                    <input type="time" id="time">
-                </div>
-            </div>
-            
-            <!-- Real Camera Integration Section -->
-            <label>Item Photo (Live Camera)</label>
-            <button type="button" class="cam-control-btn" onclick="startCamera()">📷 Open Live Camera</button>
-            <div id="camera-container"></div>
-            <button type="button" id="capture-btn" class="cam-control-btn" style="display:none; background: var(--lost);" onclick="captureSnapshot()">📸 Take Photo Snapshot</button>
-            <div id="snapshot-preview" style="margin-top: 10px; text-align: center;"></div>
-            <input type="hidden" id="capturedImageData">
-
-            <label>Description</label>
-            <textarea id="desc" placeholder="Provide distinct features, color, or marks..." rows="2"></textarea>
-            
-            <button class="submit-btn" onclick="addItem()">Post Item to Feed 🚀</button>
+    <section id="submitPage" class="page active">
+      <div class="card-form">
+        <label for="type">Report Type</label>
+        <select id="type"><option value="lost">🔴 LOST ITEM</option><option value="found">🟢 FOUND ITEM</option></select>
+        <label for="name">Item Name</label>
+        <input type="text" id="name" placeholder="e.g., Black wallet" autocomplete="off">
+        <label for="location">Location</label>
+        <input type="text" id="location" placeholder="e.g., Library 2nd Floor">
+        <label for="phone">Phone Number (optional)</label>
+        <input type="tel" id="phone" placeholder="e.g., 09XX XXX XXXX">
+        <div class="form-row">
+          <div><label for="date">Date</label><input type="date" id="date"></div>
+          <div><label for="time">Time</label><input type="time" id="time"></div>
         </div>
-    </div>
+        <label>Item Photo</label>
+        <p class="small-note">Take a picture. The AI will suggest an item name and description. Review them before posting.</p>
+        <button type="button" class="cam-control-btn" onclick="startCamera()">📷 Open Live Camera</button>
+        <div id="camera-container"></div>
+        <button type="button" id="capture-btn" class="cam-control-btn" style="display:none;background:var(--lost)" onclick="captureSnapshot()">📸 Take Photo Snapshot</button>
+        <div id="snapshot-preview" style="margin-top:10px;text-align:center"></div>
+        <p id="ai-status" class="ai-status" aria-live="polite"></p>
+        <input type="hidden" id="capturedImageData">
+        <label for="desc">Description</label>
+        <textarea id="desc" placeholder="Color, marks, or other identifying details..." rows="3"></textarea>
+        <button class="submit-btn" id="postBtn" onclick="addItem()">Post Item to Feed 🚀</button>
+      </div>
+    </section>
 
-    <!-- FEED PAGE -->
-    <div id="feedPage" class="page">
-        <input type="text" class="search-box" id="searchBar" placeholder="🔍 Search items by name or description..." onkeyup="refreshFeed()">
-        
-        <div class="filters">
-            <button class="filter-btn active" onclick="updateFilter('all', this)">All Items</button>
-            <button class="filter-btn" onclick="updateFilter('lost', this)">Lost Only</button>
-            <button class="filter-btn" onclick="updateFilter('found', this)">Found Only</button>
-        </div>
-        
-        <div id="feed"></div>
-    </div>
-</div>
+    <section id="feedPage" class="page">
+      <input type="search" class="search-box" id="searchBar" placeholder="🔍 Search by name or description..." oninput="refreshFeed()">
+      <div class="filters">
+        <button class="filter-btn active" onclick="updateFilter('all',this)">All Items</button>
+        <button class="filter-btn" onclick="updateFilter('lost',this)">Lost Only</button>
+        <button class="filter-btn" onclick="updateFilter('found',this)">Found Only</button>
+      </div>
+      <div id="feed"><p class="small-note">Loading items...</p></div>
+    </section>
+  </div>
 
-<!-- FEATURE SUGGESTION MODAL: Digital Claim Pass & Verification QR -->
-<div id="modalOverlay" onclick="closeClaimPass(event)">
+  <div id="modalOverlay" onclick="closeClaimPass(event)">
     <div class="modal-card" id="modalCard">
-        <div style="font-size:2.5rem; margin-bottom:10px;">🎟️</div>
-        <h3 style="margin:0 0 8px 0; font-size:1.3rem;">Digital Claim Pass</h3>
-        <p style="font-size:0.85rem; color:var(--text-muted); margin-bottom:20px;">Show this secure claim badge to security desk officers for item verification.</p>
-        <div id="passContent" style="background:#f8fafc; padding:15px; border-radius:12px; border:1px dashed var(--border); margin-bottom:20px; text-align:left; font-size:0.9rem;"></div>
-        <button class="submit-btn" style="margin-top:0;" onclick="document.getElementById('modalOverlay').style.display='none'">Close Pass</button>
+      <div style="font-size:2.4rem;margin-bottom:8px">🎟️</div>
+      <h3 style="margin:0 0 8px">Digital Claim Pass</h3>
+      <p class="small-note">Show this information to an authorized staff member. This pass is a convenience feature, not identity verification.</p>
+      <div id="passContent" style="background:#f8fafc;padding:15px;border-radius:12px;border:1px dashed var(--border);margin-bottom:18px;text-align:left;font-size:.9rem;overflow-wrap:anywhere"></div>
+      <button class="submit-btn" style="margin-top:0" onclick="document.getElementById('modalOverlay').style.display='none'">Close Pass</button>
     </div>
-</div>
+  </div>
 
-    <!-- ======================================================================= -->
-    <!-- JAVASCRIPT SECTION START -->
-    <!-- ======================================================================= -->
-<script>
-    // Initialize Dexie Database
+  <script>
     const db = new Dexie('LostFoundDatabase');
-    db.version(1).stores({
-        items: '++id, type, name, location, phone, date, time, desc, image, status'
-    });
-
+    db.version(1).stores({items:'++id,type,name,location,phone,date,time,desc,image,status'});
     let currentFilter = 'all';
     let html5QrCode = null;
+    let cameraStarting = false;
 
-    function openApp() {
-        document.getElementById('landingPage').style.display = 'none';
-        document.getElementById('mainApp').style.display = 'block';
+    const byId = id => document.getElementById(id);
+    function openApp(){byId('landingPage').style.display='none';byId('mainApp').style.display='block';refreshFeed();}
+    function showPage(pageId,btn){
+      document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+      document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
+      byId(pageId).classList.add('active');if(btn)btn.classList.add('active');
+      if(pageId!=='submitPage')stopCamera();
+    }
+    async function startCamera(){
+      if(cameraStarting)return;
+      if(!window.isSecureContext){alert('Camera access needs HTTPS. Open the published GitHub Pages website.');return;}
+      if(!window.Html5Qrcode){alert('Camera library did not load. Check your internet connection and reload.');return;}
+      const container=byId('camera-container');
+      container.style.display='block';byId('capture-btn').style.display='block';
+      if(!html5QrCode)html5QrCode=new Html5Qrcode('camera-container');
+      cameraStarting=true;
+      try{
+        await html5QrCode.start({facingMode:'environment'},{fps:10,qrbox:{width:220,height:220}},()=>{},()=>{});
+      }catch(err){
+        container.style.display='none';byId('capture-btn').style.display='none';
+        alert('Unable to access camera. Allow camera permission and try again. Details: '+(err.message||err));
+      }finally{cameraStarting=false;}
+    }
+    async function stopCamera(){
+      if(html5QrCode){
+        try{if(html5QrCode.isScanning)await html5QrCode.stop();}catch(err){console.warn('Camera stop:',err);}
+      }
+      byId('camera-container').style.display='none';byId('capture-btn').style.display='none';
+    }
+    async function captureSnapshot(){
+      const video=document.querySelector('#camera-container video');
+      if(!video||!video.videoWidth){alert('Camera feed is not active yet. Please wait and try again.');return;}
+      const canvas=document.createElement('canvas');canvas.width=video.videoWidth;canvas.height=video.videoHeight;
+      canvas.getContext('2d').drawImage(video,0,0,canvas.width,canvas.height);
+      const dataUrl=canvas.toDataURL('image/jpeg',0.8);
+      byId('capturedImageData').value=dataUrl;
+      byId('snapshot-preview').replaceChildren();
+      const img=document.createElement('img');img.src=dataUrl;img.alt='Captured item photo';img.className='item-photo';img.style.maxHeight='180px';byId('snapshot-preview').appendChild(img);
+      await stopCamera();
+      await analyzeCapturedImage(dataUrl);
     }
 
-    function showPage(pageId, btn) {
-        document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-        document.getElementById(pageId).classList.add('active');
-        btn.classList.add('active');
-        
-        // Stop camera if leaving the submit page
-        if(pageId !== 'submitPage' && html5QrCode) {
-            stopCamera();
+    // Browser-based image captioning. Model files are downloaded on first use.
+    let imageCaptioner=null, isAnalyzing=false;
+    async function analyzeCapturedImage(imageData){
+      const status=byId('ai-status'),nameInput=byId('name'),descInput=byId('desc');
+      if(isAnalyzing)return;
+      isAnalyzing=true;status.textContent='⏳ Loading AI model and analyzing your photo. First use may take a few minutes...';
+      try{
+        if(!imageCaptioner){
+          const {pipeline,env}=await import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.2');
+          env.allowLocalModels=false;
+          imageCaptioner=await pipeline('image-to-text','Xenova/vit-gpt2-image-captioning');
         }
+        const result=await imageCaptioner(imageData);
+        const caption=String(result?.[0]?.generated_text||'').trim();
+        if(!caption)throw new Error('No caption was generated.');
+        let itemName=caption.replace(/^(a|an|the)\s+/i,'').replace(/[.!?]+$/,'').trim();
+        itemName=itemName.charAt(0).toUpperCase()+itemName.slice(1);
+        // Preserve user-entered values; fill only empty fields.
+        if(!nameInput.value.trim())nameInput.value=itemName;
+        else nameInput.value=itemName;
+        if(!descInput.value.trim())descInput.value='AI suggestion: '+caption;
+        else descInput.value=descInput.value+'\nAI suggestion: '+caption;
+        status.textContent='✅ AI suggestion ready. Please check the name and description for accuracy.';
+      }catch(err){
+        console.error('AI image analysis failed:',err);
+        status.textContent='⚠️ AI analysis failed. Check your internet connection, then take another photo. You can still enter the details manually.';
+      }finally{isAnalyzing=false;}
     }
 
-    // Camera Management Functions
-    function startCamera() {
-        const container = document.getElementById('camera-container');
-        container.style.display = 'block';
-        document.getElementById('capture-btn').style.display = 'block';
-
-        if (!html5QrCode) {
-            html5QrCode = new Html5Qrcode("camera-container");
-        }
-
-        html5QrCode.start(
-            { facingMode: "environment" }, 
-            { fps: 10, qrbox: { width: 220, height: 220 } },
-            (decodedText, decodedResult) => {},
-            (errorMessage) => {}
-        ).catch(err => {
-            alert("Unable to access camera: " + err);
-        });
+    async function addItem(){
+      const name=byId('name').value.trim(),location=byId('location').value.trim();
+      if(!name||!location){alert('Please fill in the Item Name and Location.');return;}
+      const item={type:byId('type').value,name,location,phone:byId('phone').value.trim(),date:byId('date').value,time:byId('time').value,desc:byId('desc').value.trim(),image:byId('capturedImageData').value||null,status:'unclaimed'};
+      try{
+        await db.items.add(item);alert('Posted successfully!');
+        ['name','location','phone','date','time','desc'].forEach(id=>byId(id).value='');
+        byId('snapshot-preview').replaceChildren();byId('capturedImageData').value='';byId('ai-status').textContent='';
+        currentFilter='all';document.querySelectorAll('.filter-btn').forEach(b=>b.classList.toggle('active',b.textContent.trim()==='All Items'));
+        await refreshFeed();showPage('feedPage',document.querySelectorAll('.tab-btn')[1]);
+      }catch(error){console.error('Error saving item:',error);alert('Could not save item. Your browser storage may be full; try a smaller photo.');}
     }
-
-    function stopCamera() {
-        if (html5QrCode) {
-            html5QrCode.stop().then(() => {
-                document.getElementById('camera-container').style.display = 'none';
-                document.getElementById('capture-btn').style.display = 'none';
-            }).catch(err => {
-                console.error("Failed to stop camera", err);
-            });
-        }
+    function updateFilter(type,btn){currentFilter=type;document.querySelectorAll('.filter-btn').forEach(b=>b.classList.remove('active'));btn.classList.add('active');refreshFeed();}
+    async function toggleStatus(id){
+      const item=await db.items.get(id);if(!item)return;
+      const newStatus=item.status==='claimed'?'unclaimed':'claimed';
+      await db.items.update(id,{status:newStatus});await refreshFeed();
+      if(newStatus==='claimed')showClaimPass({...item,status:newStatus});
     }
-
-    function captureSnapshot() {
-        const videoElement = document.querySelector('#camera-container video');
-        if (!videoElement) {
-            return alert("Camera feed not active!");
-        }
-
-        const canvas = document.createElement('canvas');
-        canvas.width = videoElement.videoWidth || 640;
-        canvas.height = videoElement.videoHeight || 480;
-        const ctx = canvas.getContext('2d');
-        ctx.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
-
-        const dataUrl = canvas.toDataURL('image/jpeg', 0.75);
-        document.getElementById('capturedImageData').value = dataUrl;
-        document.getElementById('snapshot-preview').innerHTML = `<img src="${dataUrl}" style="width:100%; border-radius:12px; max-height:180px; object-fit:cover; border: 2px solid var(--border);">`;
-        
-        stopCamera();
+    function showClaimPass(item){
+      const wrap=byId('passContent');wrap.replaceChildren();
+      const lines=[['Item',item.name],['Location',item.location],['Contact',item.phone||'N/A'],['Token ID','LF-'+item.id+'-'+Math.random().toString(36).slice(2,7).toUpperCase()],['Status','Marked as claimed']];
+      lines.forEach(([label,value])=>{const row=document.createElement('p');row.style.margin='7px 0';const strong=document.createElement('strong');strong.textContent=label+': ';row.append(strong,document.createTextNode(value));wrap.appendChild(row);});
+      byId('modalOverlay').style.display='flex';
     }
-
-    async function addItem() {
-        const name = document.getElementById('name').value;
-        const location = document.getElementById('location').value;
-        const imageData = document.getElementById('capturedImageData').value;
-        
-        if(!name || !location) return alert("Please fill up the Item Name and Location!");
-
-        const item = {
-            type: document.getElementById('type').value,
-            name: name,
-            location: location,
-            phone: document.getElementById('phone').value,
-            date: document.getElementById('date').value,
-            time: document.getElementById('time').value,
-            desc: document.getElementById('desc').value,
-            image: imageData || null,
-            status: 'unclaimed'
-        };
-
-        try {
-            await db.items.add(item);
-            alert("Posted successfully!");
-            document.querySelectorAll('input:not([type=hidden]), textarea').forEach(el => el.value = '');
-            document.getElementById('snapshot-preview').innerHTML = '';
-            document.getElementById('capturedImageData').value = '';
-            refreshFeed();
-            showPage('feedPage', document.querySelectorAll('.tab-btn')[1]);
-        } catch (error) {
-            console.error("Error saving item:", error);
-            alert("Failed to save item to database.");
-        }
-    }
-
-    function updateFilter(type, btn) {
-        currentFilter = type;
-        document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-        refreshFeed();
-    }
-
-    async function toggleStatus(id) {
-        let item = await db.items.get(id);
-        if (item) {
-            const newStatus = (item.status === 'claimed') ? 'unclaimed' : 'claimed';
-            await db.items.update(id, { status: newStatus });
-            refreshFeed();
-            
-            // Feature Suggestion Action: Trigger Claim Pass Modal if claimed!
-            if(newStatus === 'claimed') {
-                showClaimPass(item);
-            }
-        }
-    }
-
-    // New Suggested Feature: Show Digital Verification Claim Pass
-    function showClaimPass(item) {
-        const passContent = document.getElementById('passContent');
-        passContent.innerHTML = `
-            <strong>Item:</strong> ${item.name}<br>
-            <strong>Location:</strong> ${item.location}<br>
-            <strong>Contact:</strong> ${item.phone || 'N/A'}<br>
-            <strong>Token ID:</strong> #LF-${item.id}-${Math.floor(Math.random()*9000+1000)}<br>
-            <div style="margin-top:10px; text-align:center; font-size:0.75rem; color:var(--text-muted);">Status: Verified Secure Claim</div>
-        `;
-        document.getElementById('modalOverlay').style.display = 'flex';
-    }
-
-    function closeClaimPass(e) {
-        if(e.target.id === 'modalOverlay') {
-            document.getElementById('modalOverlay').style.display = 'none';
-        }
-    }
-
-    async function refreshFeed() {
-        const query = (document.getElementById('searchBar')?.value || '').toLowerCase();
-        let items = await db.items.reverse().toArray();
-        
-        const filtered = items.filter(i => {
-            const matchType = (currentFilter === 'all' || i.type === currentFilter);
-            const matchSearch = (i.name || '').toLowerCase().includes(query) || (i.desc || '').toLowerCase().includes(query);
-            return matchType && matchSearch;
-        });
+    function closeClaimPass(e){if(e.target===byId('modalOverlay'))byId('modalOverlay').style.display='none';}
+    async function refreshFeed(){
+      const query=(byId('searchBar')?.value||'').toLowerCase().trim();
+      try{
+        const items=await db.items.reverse().toArray();
+        const filtered=items.filter(i=>(currentFilter==='all'||i.type===currentFilter)&&((i.name||'').toLowerCase().includes(query)||(i.desc||'').toLowerCase().includes(query)||(i.location||'').toLowerCase().includes(query)));
         render(filtered);
+      }catch(err){console.error(err);byId('feed').textContent='Unable to load items. Reload the page and try again.';}
     }
-
-    function render(items) {
-        const feed = document.getElementById('feed');
-        feed.innerHTML = items.length ? items.map(i => `
-            <div class="card ${i.type}" style="opacity: ${i.status === 'claimed' ? '0.65' : '1'}">
-                <button class="delete-btn" onclick="deleteItem(${i.id})">Delete</button>
-                <span class="type-badge">${i.type}</span>
-                <span class="item-name">${i.name}</span>
-                ${i.image ? `<img src="${i.image}" style="width:100%; border-radius:12px; margin-bottom:12px; max-height:220px; object-fit:cover;">` : ''}
-                <div style="font-size: 0.85rem; color:var(--text-muted); margin-bottom:4px;">📍 <strong>Location:</strong> ${i.location}</div>
-                <div style="font-size: 0.85rem; color:var(--text-muted);">🕒 <strong>Date/Time:</strong> ${i.date || 'N/A'} ${i.time || ''}</div>
-                <p style="font-size: 0.9rem; color:#334155; margin:12px 0; line-height:1.4;">${i.desc || 'No description provided.'}</p>
-                ${i.phone ? `<a href="tel:${i.phone}" class="item-phone">📞 ${i.phone}</a>` : ''}
-                <br>
-                <button class="claim-btn" style="background: ${i.status === 'claimed' ? '#d1fae5' : '#e0e7ff'}; color: ${i.status === 'claimed' ? '#065f46' : '#4338ca'};" onclick="toggleStatus(${i.id})">
-                    ${i.status === 'claimed' ? '✅ Item Claimed (View Pass)' : 'Mark as Claimed'}
-                </button>
-            </div>
-        `).join('') : '<p style="text-align:center; color:var(--text-muted); margin-top:40px; font-weight:600;">No items found.</p>';
+    function render(items){
+      const feed=byId('feed');feed.replaceChildren();
+      if(!items.length){const p=document.createElement('p');p.className='small-note';p.style.textAlign='center';p.style.marginTop='35px';p.textContent='No items found.';feed.appendChild(p);return;}
+      items.forEach(i=>{
+        const card=document.createElement('article');card.className='card '+(i.type==='found'?'found':'lost');if(i.status==='claimed')card.style.opacity='.72';
+        const del=document.createElement('button');del.className='delete-btn';del.textContent='Delete';del.onclick=()=>deleteItem(i.id);card.appendChild(del);
+        const badge=document.createElement('span');badge.className='type-badge';badge.textContent=i.type;card.appendChild(badge);
+        const title=document.createElement('span');title.className='item-name';title.textContent=i.name;card.appendChild(title);
+        if(i.image){const img=document.createElement('img');img.src=i.image;img.alt='Photo of '+i.name;img.className='item-photo';card.appendChild(img);}
+        const loc=document.createElement('div');loc.className='small-note';loc.textContent='📍 Location: '+i.location;card.appendChild(loc);
+        const date=document.createElement('div');date.className='small-note';date.style.marginTop='4px';date.textContent='🕒 Date/Time: '+(i.date||'N/A')+' '+(i.time||'');card.appendChild(date);
+        const desc=document.createElement('p');desc.style.cssText='font-size:.9rem;color:#334155;margin:12px 0;line-height:1.5;white-space:pre-line';desc.textContent=i.desc||'No description provided.';card.appendChild(desc);
+        if(i.phone){const phone=document.createElement('a');phone.className='item-phone';phone.href='tel:'+i.phone.replace(/[^\d+]/g,'');phone.textContent='📞 '+i.phone;card.appendChild(phone);}
+        const br=document.createElement('br');card.appendChild(br);
+        const claim=document.createElement('button');claim.className='claim-btn';claim.style.background=i.status==='claimed'?'#d1fae5':'#e0e7ff';claim.style.color=i.status==='claimed'?'#065f46':'#4338ca';claim.textContent=i.status==='claimed'?'✅ Item Claimed (View Pass)':'Mark as Claimed';claim.onclick=()=>toggleStatus(i.id);card.appendChild(claim);
+        feed.appendChild(card);
+      });
     }
-
-    async function deleteItem(id) {
-        if(confirm("Are you sure you want to delete this post?")) {
-            await db.items.delete(id);
-            refreshFeed();
-        }
-    }
-</script>
-    <!-- ======================================================================= -->
-    <!-- JAVASCRIPT SECTION END -->
-    <!-- ======================================================================= -->
+    async function deleteItem(id){if(confirm('Are you sure you want to delete this post?')){await db.items.delete(id);refreshFeed();}}
+    window.addEventListener('beforeunload',()=>{if(html5QrCode&&html5QrCode.isScanning)html5QrCode.stop().catch(()=>{});});
+    // Check database availability early so errors are visible during development.
+    db.open().catch(err=>{console.error('Database initialization failed:',err);});
+  </script>
 </body>
 </html>
