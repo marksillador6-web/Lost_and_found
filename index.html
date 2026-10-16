@@ -101,7 +101,7 @@
     let cameraStarting = false;
 
     const byId = id => document.getElementById(id);
-    function openApp(){byId('landingPage').style.display='none';byId('mainApp').style.display='block';refreshFeed();byId('ai-status').textContent='AI loads only when you choose a photo, so the portal opens faster.';}
+    function openApp(){byId('landingPage').style.display='none';byId('mainApp').style.display='block';refreshFeed();prepareAI();}
     function showPage(pageId,btn){
       document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
       document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
@@ -175,25 +175,182 @@
       reader.readAsDataURL(file);
     }
 
-    // Lightweight image classification: load only after the user chooses a photo.
-    // MobileNetV4 classification is efficient, but predicts image categories rather
-    // than drawing boxes around objects. Model files are cached by the browser.
-    let imageClassifier = null;
-    let classifierPromise = null;
+    // Load one lightweight model in the background. Reuse it for every photo.
+    let objectDetector = null;
+    let detectorPromise = null;
     let isAnalyzing = false;
 
     function prettyItemName(label) {
-      const clean = String(label || '').toLowerCase().split(',')[0].trim();
+      const clean = String(label || 'Unidentified Item').toLowerCase();
       const aliases = {
-        'cellular telephone': 'Mobile Phone', 'cell phone': 'Mobile Phone',
-        'handbag': 'Handbag', 'purse': 'Handbag', 'backpack': 'Backpack',
-        'laptop': 'Laptop', 'notebook': 'Laptop', 'book': 'Book',
-        'water bottle': 'Bottle', 'bottle': 'Bottle', 'umbrella': 'Umbrella',
-        'remote control': 'Remote Control', 'computer mouse': 'Computer Mouse',
-        'keyboard': 'Keyboard', 'suitcase': 'Suitcase', 'wallet': 'Wallet',
-        'watch': 'Watch', 'analog clock': 'Clock', 'digital clock': 'Clock',
-        'sunglasses': 'Sunglasses', 'glasses': 'Glasses', 'key': 'Keys',
-        'keys': 'Keys', 'shoe': 'Shoe', 'running shoe': 'Shoe'
+        'cell phone': 'Mobile Phone', 'handbag': 'Handbag', 'backpack': 'Backpack',
+        'laptop': 'Laptop', 'book': 'Book', 'bottle': 'Bottle', 'umbrella': 'Umbrella',
+        'remote': 'Remote Control', 'mouse': 'Computer Mouse', 'keyboard': 'Keyboard',
+        'suitcase': 'Suitcase', 'tie': 'Tie', 'clock': 'Clock', 'scissors': 'Scissors'
       };
-      if (aliases[clean]) return aliases[clean];
-      return c
+      return aliases[clean] || clean.replace(/\b\w/g, c => c.toUpperCase());
+    }
+
+    async function getObjectDetector() {
+      if (objectDetector) return objectDetector;
+      if (!detectorPromise) {
+        detectorPromise = (async () => {
+          const { pipeline, env } = await import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.2');
+          env.allowLocalModels = false;
+          env.useBrowserCache = true;
+          return await pipeline('object-detection', 'Xenova/yolos-tiny');
+        })().then(model => {
+          objectDetector = model;
+          return model;
+        }).catch(error => {
+          detectorPromise = null; // allow retry if the network fails
+          throw error;
+        });
+      }
+      return detectorPromise;
+    }
+
+    function prepareAI() {
+      const status = byId('ai-status');
+      if (!objectDetector && !detectorPromise) {
+        status.textContent = '⚡ Preparing AI in the background. First-time setup may take a little while.';
+        getObjectDetector().then(() => {
+          if (!isAnalyzing) status.textContent = '✅ AI is ready. Take or upload a photo.';
+        }).catch(error => {
+          console.warn('AI preload failed:', error);
+          if (!isAnalyzing) status.textContent = 'AI will try to load when you choose a photo. Keep your internet connected.';
+        });
+      }
+    }
+
+    async function analyzeCapturedImage(imageData) {
+      const status = byId('ai-status');
+      const nameInput = byId('name');
+      const descInput = byId('desc');
+      if (isAnalyzing) return;
+
+      isAnalyzing = true;
+      const postBtn = byId('postBtn');
+      postBtn.disabled = true;
+      status.textContent = '⚡ Checking photo...';
+
+      try {
+        // Resize before inference to reduce processing time on phones.
+        const source = new Image();
+        source.src = imageData;
+        await new Promise((resolve, reject) => {
+          source.onload = resolve;
+          source.onerror = () => reject(new Error('Could not read the photo.'));
+        });
+        const canvas = document.createElement('canvas');
+        const maxSide = 480;
+        const scale = Math.min(1, maxSide / Math.max(source.naturalWidth, source.naturalHeight));
+        canvas.width = Math.max(1, Math.round(source.naturalWidth * scale));
+        canvas.height = Math.max(1, Math.round(source.naturalHeight * scale));
+        canvas.getContext('2d', { alpha: false }).drawImage(source, 0, 0, canvas.width, canvas.height);
+
+        status.textContent = objectDetector ? '🔎 Identifying the main object...' : '⏳ First AI load can take a while; keep this page open...';
+        const detector = await getObjectDetector();
+        status.textContent = '🔎 Identifying the main object...';
+        const detections = await detector(canvas.toDataURL('image/jpeg', 0.65));
+        const best = (Array.isArray(detections) ? detections : [])
+          .filter(d => d && d.label && Number(d.score) >= 0.30)
+          .sort((a, b) => Number(b.score) - Number(a.score))[0];
+
+        let itemName;
+        let shortDescription;
+        if (best) {
+          itemName = prettyItemName(best.label);
+          shortDescription = `A ${String(best.label).toLowerCase()} appears in the photo. Please check its color, brand, and identifying marks before posting.`;
+        } else {
+          // Avoid loading a second large model; that was causing very long waits.
+          itemName = 'Unidentified Item';
+          shortDescription = 'An item is shown in the photo, but the AI could not confidently identify it. Please add its color, brand, shape, or other identifying details.';
+        }
+
+        nameInput.value = itemName;
+        descInput.value = `Item Name: ${itemName}\nShort Description: ${shortDescription}`;
+        status.textContent = best
+          ? '✅ Suggestion ready. Please check it before posting.'
+          : '⚠️ The AI could not identify this item. Add the correct name and details before posting.';
+      } catch (err) {
+        console.error('AI image analysis failed:', err);
+        status.textContent = '⚠️ AI could not load or analyze the photo. Check your internet, then try again or enter the details manually.';
+      } finally {
+        isAnalyzing = false;
+        postBtn.disabled = false;
+      }
+    }
+
+    async function addItem(){
+      const description=byId('desc').value.trim();
+      const location=byId('location').value.trim();
+      const nameMatch=description.match(/^Item Name:\s*(.+)$/im);
+      const name=(byId('name').value.trim()||(nameMatch?nameMatch[1].trim():''));
+      if(!name||!description){alert('Please take a photo for AI-generated details, or enter both Item Name: and Short Description: in the Description box.');return;}
+      if(!location){alert('Please fill in the Location.');return;}
+      const item={type:byId('type').value,name,location,phone:byId('phone').value.trim(),date:byId('date').value,time:byId('time').value,desc:description,image:byId('capturedImageData').value||null,status:'unclaimed'};
+      try{
+        await db.items.add(item);
+        alert('Posted successfully!');
+        ['name','location','phone','date','time','desc'].forEach(id=>byId(id).value='');
+        byId('snapshot-preview').replaceChildren();
+        byId('capturedImageData').value='';
+        byId('ai-status').textContent='';
+        currentFilter='all';
+        document.querySelectorAll('.filter-btn').forEach(b=>b.classList.toggle('active',b.textContent.trim()==='All Items'));
+        await refreshFeed();
+        showPage('feedPage',document.querySelectorAll('.tab-btn')[1]);
+      }catch(error){
+        console.error('Error saving item:',error);
+        alert('Could not save item. Your browser storage may be full; try a smaller photo.');
+      }
+    }
+
+    function updateFilter(type,btn){currentFilter=type;document.querySelectorAll('.filter-btn').forEach(b=>b.classList.remove('active'));btn.classList.add('active');refreshFeed();}
+    async function toggleStatus(id){
+      const item=await db.items.get(id);if(!item)return;
+      const newStatus=item.status==='claimed'?'unclaimed':'claimed';
+      await db.items.update(id,{status:newStatus});await refreshFeed();
+      if(newStatus==='claimed')showClaimPass({...item,status:newStatus});
+    }
+    function showClaimPass(item){
+      const wrap=byId('passContent');wrap.replaceChildren();
+      const lines=[['Item',item.name],['Location',item.location],['Contact',item.phone||'N/A'],['Token ID','LF-'+item.id+'-'+Math.random().toString(36).slice(2,7).toUpperCase()],['Status','Marked as claimed']];
+      lines.forEach(([label,value])=>{const row=document.createElement('p');row.style.margin='7px 0';const strong=document.createElement('strong');strong.textContent=label+': ';row.append(strong,document.createTextNode(value));wrap.appendChild(row);});
+      byId('modalOverlay').style.display='flex';
+    }
+    function closeClaimPass(e){if(e.target===byId('modalOverlay'))byId('modalOverlay').style.display='none';}
+    async function refreshFeed(){
+      const query=(byId('searchBar')?.value||'').toLowerCase().trim();
+      try{
+        const items=await db.items.reverse().toArray();
+        const filtered=items.filter(i=>(currentFilter==='all'||i.type===currentFilter)&&((i.name||'').toLowerCase().includes(query)||(i.desc||'').toLowerCase().includes(query)||(i.location||'').toLowerCase().includes(query)));
+        render(filtered);
+      }catch(err){console.error(err);byId('feed').textContent='Unable to load items. Reload the page and try again.';}
+    }
+    function render(items){
+      const feed=byId('feed');feed.replaceChildren();
+      if(!items.length){const p=document.createElement('p');p.className='small-note';p.style.textAlign='center';p.style.marginTop='35px';p.textContent='No items found.';feed.appendChild(p);return;}
+      items.forEach(i=>{
+        const card=document.createElement('article');card.className='card '+(i.type==='found'?'found':'lost');if(i.status==='claimed')card.style.opacity='.72';
+        const del=document.createElement('button');del.className='delete-btn';del.textContent='Delete';del.onclick=()=>deleteItem(i.id);card.appendChild(del);
+        const badge=document.createElement('span');badge.className='type-badge';badge.textContent=i.type;card.appendChild(badge);
+        const title=document.createElement('span');title.className='item-name';title.textContent=i.name;card.appendChild(title);
+        if(i.image){const img=document.createElement('img');img.src=i.image;img.alt='Photo of '+i.name;img.className='item-photo';card.appendChild(img);}
+        const loc=document.createElement('div');loc.className='small-note';loc.textContent='📍 Location: '+i.location;card.appendChild(loc);
+        const date=document.createElement('div');date.className='small-note';date.style.marginTop='4px';date.textContent='🕒 Date/Time: '+(i.date||'N/A')+' '+(i.time||'');card.appendChild(date);
+        const desc=document.createElement('p');desc.style.cssText='font-size:.9rem;color:#334155;margin:12px 0;line-height:1.5;white-space:pre-line';desc.textContent=i.desc||'No description provided.';card.appendChild(desc);
+        if(i.phone){const phone=document.createElement('a');phone.className='item-phone';phone.href='tel:'+i.phone.replace(/[^\d+]/g,'');phone.textContent='📞 '+i.phone;card.appendChild(phone);}
+        const br=document.createElement('br');card.appendChild(br);
+        const claim=document.createElement('button');claim.className='claim-btn';claim.style.background=i.status==='claimed'?'#d1fae5':'#e0e7ff';claim.style.color=i.status==='claimed'?'#065f46':'#4338ca';claim.textContent=i.status==='claimed'?'✅ Item Claimed (View Pass)':'Mark as Claimed';claim.onclick=()=>toggleStatus(i.id);card.appendChild(claim);
+        feed.appendChild(card);
+      });
+    }
+    async function deleteItem(id){if(confirm('Are you sure you want to delete this post?')){await db.items.delete(id);refreshFeed();}}
+    window.addEventListener('beforeunload',()=>{if(html5QrCode&&html5QrCode.isScanning)html5QrCode.stop().catch(()=>{});});
+    // Check database availability early so errors are visible during development.
+    db.open().catch(err=>{console.error('Database initialization failed:',err);});
+  </script>
+</body>
+</html>
